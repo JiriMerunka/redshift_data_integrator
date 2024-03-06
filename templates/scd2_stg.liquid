@@ -1,0 +1,264 @@
+{%- comment -%}
+{%- assign _sys_hub_id = {{_sys_hub_id}} | default: "_sys_hub_id" -%}
+{%- assign _sys_captured_at = {{_sys_captured_at}} | default: "_sys_captured_at" -%}
+{%- assign _sys_filename = {{_sys_filename}} | default: "_sys_filename" -%}
+{%- assign _sys_load_id = {{_sys_load_id}} | default: "_sys_load_id" -%}
+{%- assign _sys_hash = {{_sys_hash}} | default: "_sys_hash" -%}
+{%- endcomment -%}
+
+
+{%- assign is_deleted_field = {{is_deleted_field}} | default: "_sys_is_deleted" -%}
+{%- assign _sys_valid_from = {{_sys_valid_from}} | default: "_sys_valid_from" -%}
+{%- assign _sys_valid_to = {{_sys_valid_to}} | default: "_sys_valid_to" -%}
+{%- assign _sys_is_current = {{_sys_is_current}} | default: "_sys_is_current" -%}
+{%- assign hash_field = {{hash_field}} | default: "_sys_hash" -%}
+{%- assign updated_at_field = {{updated_at_field}} | default: "_sys_updated_at" -%}
+
+
+{%- assign transaction_date = {{transaction_date}} | default: "current_timestamp" -%}
+{%- assign track_ind = {{track_ind}} | default: "track_ind" -%}
+{%- assign new_ind = {{new_ind}} | default: "new_ind" -%}
+
+
+{%- comment -%}
+{%- endcomment -%}
+{%- assign all_fields = keys | concat: fields -%}
+{%- comment -%}
+{%- endcomment -%}
+{%- assign all_fields = {{all_fields|uniq}} -%}
+{%- assign consolidate_without_sys_hash = {{consolidate_without_sys_hash}} | default: "false" %}
+{%- assign historization_type = {{historization_type}} | default: "scd_1" -%}
+{%- assign wrk_tgt_table_name = "wrk_" | append: tgt_table_name -%}
+{%- assign wrk_tgt_table_name_diff = wrk_tgt_table_name | append: "_diff" -%}
+
+{%- assign ee = "=" -%}
+
+{%- if consolidate_without_sys_hash == 'false' -%}
+{%- assign consolidate_keys = keys -%}
+{%- else -%}
+{%- assign consolidate_keys = all_fields -%}
+{%- assign ee = "<=>" %}
+{%- endif -%}
+
+{% capture newLine %}
+{% endcapture %}
+
+
+
+{%- comment -%}
+Default mode assumes INC transformation done into WRK table.
+Available values: ["full","inc"]
+Default integration with sys_hash 
+Available values: ["false","true"]
+Default ee value is "=", without _sys_hash we use NULL safe egual sign
+Default historization_type: scd_1
+Available values: ["scd_1","scd_2"]
+In order to create snap shots you can use partial full load array
+{%- endcomment -%}
+------------------------------------------------------------------
+/* source_mode: {{source_mode}} */
+/* consolidate_without_sys_hash: {{consolidate_without_sys_hash}} */
+/* historization_type: {{historization_type}} */
+/* partial_full_load:  {% for field in partial_full_load -%} {{ field }} {%- unless forloop.last %}
+                      ,{% endunless %}{% endfor %} */
+/* {{tgt_table_name}} */
+------------------------------------------------------------------
+--0 fill uniq table
+TRUNCATE TABLE src_csv_{{ tgt_table_name }}_merge_uniq;
+INSERT INTO src_csv_{{ tgt_table_name }}_merge_uniq({% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %},_sys_filename,_sys_hash)
+SELECT
+         {% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %} 
+        ,{% endunless %}{% endfor %}
+        ,_sys_filename
+        {% if {(fields.first)} %}
+        ,MD5 (
+            {% for field in fields %} COALESCE(("{{ field['name']}}" {%- unless forloop.last -%} )::VARCHAR(1000),'') || '|' ||
+            {% endunless %} {% endfor %})::VARCHAR(1000),'')
+            )  
+        {%- else -%}
+        ,CAST('' AS VARCHAR(255))
+        {%- endif -%} 
+        {{ newLine }}
+        AS _sys_hash
+FROM 
+(
+        SELECT
+           i1.*,
+              LEAD(i1._sys_captured_at,1) OVER (PARTITION BY {% for key in keys %}i1."{{ key['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %} ORDER BY i1._sys_captured_at) nv
+       FROM src_csv_{{ tgt_table_name }}_merge i1
+) b WHERE nv IS NULL
+;
+------------------------------------------------------------------
+
+--1 fill diff table
+TRUNCATE TABLE src_csv_{{ tgt_table_name }}_merge_diff;
+INSERT INTO src_csv_{{ tgt_table_name }}_merge_diff({% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %},_sys_filename,_sys_hash,{% for ind_src_field in ind_src_fields %}{{ ind_src_field['name']}}{% unless forloop.last %},{% endunless %}{% endfor %})
+WITH stg AS (
+    SELECT
+        {% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %} 
+        ,{% endunless %}{% endfor %}
+        ,_sys_filename
+        ,_sys_hash
+    FROM src_csv_{{ tgt_table_name }}_merge_uniq
+    )
+SELECT
+     s.* 
+    ,CASE WHEN ({% for key in keys %}c."{{ key['name']}}" IS NULL{% unless forloop.last %} OR {% endunless %}{% endfor %}) THEN true ELSE false END AS new_ind
+    ,CASE WHEN ({% for key in keys %}c."{{ key['name']}}" IS NOT NULL{% unless forloop.last %} AND {% endunless %}{% endfor %}) AND s._sys_hash <> c._sys_hash THEN true ELSE false END AS track_ind
+ FROM stg s
+LEFT JOIN stg_csv_{{ tgt_table_name }}_merge c ON {% for key in keys %}s."{{ key['name']}}" = c."{{ key['name']}}"{% unless forloop.last %} AND {% endunless %}{% endfor %} 
+AND c.{{is_deleted_field}} = false 
+{{ newLine }}
+{%- if historization_type == 'scd_2' -%}
+AND c.{{_sys_is_current}} = true
+{%- endif -%} 
+;
+
+------------------------------------------------------------------
+--2  merge changes to dim customer
+BEGIN TRANSACTION;
+
+-- close current type 2 active record based of staging data where change indicator is 1
+UPDATE stg_csv_{{ tgt_table_name }}_merge c
+
+SET {{updated_at_field}} = current_timestamp,
+{{ newLine }}
+{%- if historization_type == 'scd_2' -%}
+    {{_sys_valid_to}}  = {{transaction_date}} - interval '1 second',--stg_effective_dt - interval '1 second',
+    {{_sys_is_current}} = false
+{%- else -%}
+    {% if {(fields.first)} %}{% for field in fields %}"{{ field['name']}}" = s."{{ field['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %},{%- endif -%}
+    _sys_hash = s._sys_hash
+{%- endif -%}
+{{ newLine }}
+FROM src_csv_{{ tgt_table_name }}_merge_diff s
+WHERE {% for key in keys %}s."{{ key['name']}}" = c."{{ key['name']}}"{% unless forloop.last %} AND {% endunless %}{% endfor %}
+{%- if historization_type == 'scd_2' -%}
+AND c.{{_sys_valid_to}} = '2999-12-31' 
+{%- endif -%} 
+AND s.{{track_ind}} = true;
+
+{{ newLine }}
+{%- if source_mode == 'full' -%}
+-- close(scd_2)/delete(scd_1) record not in staging data (full load only) 
+UPDATE stg_csv_{{ tgt_table_name }}_merge c
+{{ newLine }}
+{%- if historization_type == 'scd_2' -%}
+SET {{_sys_is_current}}  = false,
+    {{_sys_valid_to}}  = {{transaction_date}} - interval '1 second',
+    {{updated_at_field}} = current_timestamp
+{{ newLine }}
+{%- endif -%}
+{%- if historization_type == 'scd_1' -%}
+SET {{is_deleted_field}} = true,
+    {{updated_at_field}} = current_timestamp
+{%- endif -%}
+{{ newLine }}
+FROM stg_csv_{{ tgt_table_name }}_merge c
+WHERE NOT EXISTS 
+(
+    SELECT 1 FROM src_csv_{{ tgt_table_name }}_merge_diff s
+    WHERE {% for key in keys %}s."{{ key['name']}}" = c."{{ key['name']}}"{% unless forloop.last %} AND {% endunless %}{% endfor %}
+)
+AND c.{{is_deleted_field}} = false
+{{ newLine }}
+{%- if historization_type == 'scd_2' -%}
+AND c.{{_sys_is_current}} = true
+{%- endif -%} 
+;
+{%- endif -%}
+{{ newLine }}
+
+-- create latest version type 2 active record from staging data
+-- this includes Changed + New records
+
+INSERT INTO stg_csv_{{ tgt_table_name }}_merge (
+        {% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %} 
+        ,{% endunless %}{% endfor %}
+        ,_sys_id
+        ,_sys_filename
+        ,_sys_hash
+    {{ newLine }}
+    {%- if historization_type == 'scd_2' -%}
+        ,{{_sys_valid_from}}
+        ,{{_sys_valid_to}}
+        ,{{_sys_is_current}}
+    {%- endif -%}
+    {{ newLine }}
+        ,{{is_deleted_field}}
+        /* ,record_insert_ts */
+        ,{{updated_at_field}})
+
+SELECT
+    {% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    {% if {(keys.first)} %}
+    ,MD5 (
+        {% for key in keys %} COALESCE(("{{ key['name']}}" {%- unless forloop.last -%} )::VARCHAR(1000),'') || '|' ||
+        {% endunless %} {% endfor %})::VARCHAR(1000),'')
+        )
+    {%- else -%}
+        ,CAST('' AS VARCHAR(255))
+    {%- endif -%}   
+    {{ newLine }}
+    AS _sys_id
+    ,_sys_filename
+    ,_sys_hash
+{{ newLine }}
+{%- if historization_type == 'scd_2' -%}
+    ,{{transaction_date}} as {{_sys_valid_from}} --stg_effective_dt as _sys_valid_from
+    ,'2999-12-31' as {{_sys_valid_to}}
+    ,true as {{_sys_is_current}}
+{%- endif -%}
+{{ newLine }} 
+    ,false as {{is_deleted_field}}
+    --, current_timestamp as record_insert_ts,
+    ,current_timestamp as _sys_updated_at
+
+FROM src_csv_{{ tgt_table_name }}_merge_diff
+WHERE {{new_ind}} = true
+{{ newLine }}
+{%- if historization_type == 'scd_2' -%}
+OR
+{{track_ind}}  = true 
+{%- endif -%}
+;
+
+-- update type 1 current active records for non-tracking attributes
+
+/*UPDATE stg_csv_gdp_f_ads_conn_size_merge c
+SET  snapshot_date = s.snapshot_date
+    ,ads_conn_id = s.ads_conn_id
+    ,audit_ads_conn_size_mb = s.audit_ads_conn_size_mb
+    ,real_ads_conn_size_mb = s.real_ads_conn_size_mb
+
+    {% for all_field in all_fields %}"{{ all_field['name']}}" = s."{{ all_field['name']}}"{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+
+
+    ,{{updated_at_field}} = current_timestamp
+FROM src_csv_{{ tgt_table_name }}_merge_diff s
+WHERE {% for key in keys %}s."{{ key['name']}}" = c."{{ key['name']}}"{% unless forloop.last %} AND {% endunless %}{% endfor %}
+AND c.{{_sys_valid_to}} = '2999-12-31'
+AND s.{{track_ind}} = false and s.{{new_ind}} = false;*/
+
+COMMIT TRANSACTION;
+
+ANALYZE stg_csv_{{ tgt_table_name }}_merge;
+
+--unload changed data to S3 -- sync Redshift to Snowflake
+UNLOAD('SELECT * FROM stg_csv_{{ tgt_table_name }}_merge WHERE _sys_updated_at = (SELECT MAX(_sys_updated_at) FROM stg_csv_{{ tgt_table_name }}_merge)') TO '<unload_to_s3_s3_dir>/stg_csv_{{ tgt_table_name }}_merge/<yyyymmddHHMMSS>_' IAM_ROLE 'iam_role' HEADER EXTENSION 'csv' ALLOWOVERWRITE ADDQUOTES ESCAPE;
+
+--unload changed data to DEV S3 - 100 rows only
+
+---create a temporary table with limited rows
+DROP TABLE IF EXISTS tmp_stg_csv_{{ tgt_table_name }}_merge_max_sys_updated_at_limit100;
+CREATE LOCAL TEMP TABLE tmp_stg_csv_{{ tgt_table_name }}_merge_max_sys_updated_at_limit100
+AS
+SELECT *
+FROM stg_csv_{{ tgt_table_name }}_merge
+WHERE _sys_updated_at = (SELECT MAX(_sys_updated_at) FROM stg_csv_{{ tgt_table_name }}_merge)
+LIMIT 100
+;
+
+UNLOAD('SELECT * FROM tmp_stg_csv_{{ tgt_table_name }}_merge_max_sys_updated_at_limit100') TO '<unload_to_dev_s3_s3_dir>/stg_csv_{{ tgt_table_name }}_merge/<yyyymmddHHMMSS>_' IAM_ROLE 'iam_role' HEADER EXTENSION 'csv' ALLOWOVERWRITE ADDQUOTES ESCAPE;

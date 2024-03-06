@@ -1,0 +1,67 @@
+{%- comment -%}
+{%- assign _sys_hub_id = {{_sys_hub_id}} | default: "_sys_hub_id" -%}
+{%- assign _sys_captured_at = {{_sys_captured_at}} | default: "_sys_captured_at" -%}
+{%- assign _sys_filename = {{_sys_filename}} | default: "_sys_filename" -%}
+{%- assign _sys_load_id = {{_sys_load_id}} | default: "_sys_load_id" -%}
+{%- assign _sys_hash = {{_sys_hash}} | default: "_sys_hash" -%}
+{%- endcomment -%}
+
+
+{%- assign is_deleted_field = {{is_deleted_field}} | default: "_sys_is_deleted" -%}
+{%- assign _sys_valid_from = {{_sys_valid_from}} | default: "_sys_valid_from" -%}
+{%- assign _sys_valid_to = {{_sys_valid_to}} | default: "_sys_valid_to" -%}
+{%- assign _sys_is_current = {{_sys_is_current}} | default: "_sys_is_current" -%}
+{%- assign hash_field = {{hash_field}} | default: "_sys_hash" -%}
+{%- assign updated_at_field = {{updated_at_field}} | default: "_sys_updated_at" -%}
+{%- comment -%}
+{%- endcomment -%}
+{%- assign all_fields = keys | concat: fields -%}
+{%- comment -%}
+{%- endcomment -%}
+{%- assign all_fields = {{all_fields|uniq}} -%}
+{%- assign consolidate_without_sys_hash = {{consolidate_without_sys_hash}} | default: "false" %}
+{%- assign historization_type = {{historization_type}} | default: "scd_1" -%}
+{%- assign wrk_tgt_table_name = "wrk_" | append: tgt_table_name -%}
+{%- assign wrk_tgt_table_name_diff = wrk_tgt_table_name | append: "_diff" -%}
+
+{%- assign ee = "=" -%}
+
+{%- if consolidate_without_sys_hash == 'false' -%}
+{%- assign consolidate_keys = keys -%}
+{%- else -%}
+{%- assign consolidate_keys = all_fields -%}
+{%- assign ee = "<=>" %}
+{%- endif -%}
+
+{% capture newLine %}
+{% endcapture %}
+
+
+{%- comment -%}
+Default mode assumes INC transformation done into WRK table.
+Available values: ["full","inc"]
+Default integration with sys_hash 
+Available values: ["false","true"]
+Default ee value is "=", without _sys_hash we use NULL safe egual sign
+Default historization_type: scd_1
+Available values: ["scd_1","scd_2"]
+In order to create snap shots you can use partial full load array
+{%- endcomment -%}
+
+COPY src_csv_{{ tgt_table_name }}_merge({% for all_field in all_fields %}"{{ all_field['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %})
+FROM 'src_file'
+{%- comment -%}
+DELIMITER ','
+{%- endcomment -%}
+{{ newLine }}   
+format_param
+DELIMITER 'delimiter_string' 
+IGNOREHEADER ignore_header
+IAM_ROLE 'iam_role'
+;
+
+UPDATE src_csv_{{ tgt_table_name }}_merge
+SET _sys_filename = 'src_file'
+--WHERE _sys_captured_at = ( SELECT MAX(_sys_captured_at) FROM src_csv_{{ tgt_table_name }}_merge WHERE _sys_filename IS NULL  )
+WHERE _sys_filename IS NULL 
+;

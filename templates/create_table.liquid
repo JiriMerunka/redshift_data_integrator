@@ -1,0 +1,147 @@
+{%- comment -%}
+{%- assign _sys_hub_id = {{_sys_hub_id}} | default: "_sys_hub_id" -%}
+{%- assign _sys_captured_at = {{_sys_captured_at}} | default: "_sys_captured_at" -%}
+{%- assign _sys_filename = {{_sys_filename}} | default: "_sys_filename" -%}
+{%- assign _sys_load_id = {{_sys_load_id}} | default: "_sys_load_id" -%}
+{%- assign _sys_hash = {{_sys_hash}} | default: "_sys_hash" -%}
+{%- endcomment -%}
+
+
+{%- assign is_deleted_field = {{is_deleted_field}} | default: "_sys_is_deleted" -%}
+{%- assign _sys_valid_from = {{_sys_valid_from}} | default: "_sys_valid_from" -%}
+{%- assign _sys_valid_to = {{_sys_valid_to}} | default: "_sys_valid_to" -%}
+{%- assign _sys_is_current = {{_sys_is_current}} | default: "_sys_is_current" -%}
+{%- assign hash_field = {{hash_field}} | default: "_sys_hash" -%}
+{%- assign updated_at_field = {{updated_at_field}} | default: "_sys_updated_at" -%}
+{%- comment -%}
+{%- endcomment -%}
+{%- assign all_fields = keys | concat: fields -%}
+{%- comment -%}
+{%- endcomment -%}
+{%- assign all_fields = {{all_fields|uniq}} -%}
+{%- assign consolidate_without_sys_hash = {{consolidate_without_sys_hash}} | default: "false" %}
+{%- assign historization_type = {{historization_type}} | default: "scd_1" -%}
+{%- assign wrk_tgt_table_name = "wrk_" | append: tgt_table_name -%}
+{%- assign wrk_tgt_table_name_diff = wrk_tgt_table_name | append: "_diff" -%}
+
+{%- assign ee = "=" -%}
+
+{%- if consolidate_without_sys_hash == 'false' -%}
+{%- assign consolidate_keys = keys -%}
+{%- else -%}
+{%- assign consolidate_keys = all_fields -%}
+{%- assign ee = "<=>" %}
+{%- endif -%}
+
+
+
+{%- comment -%}
+Default mode assumes INC transformation done into WRK table.
+Available values: ["full","inc"]
+Default integration with sys_hash 
+Available values: ["false","true"]
+Default ee value is "=", without _sys_hash we use NULL safe egual sign
+Default historization_type: scd_1
+Available values: ["scd_1","scd_2"]
+In order to create snap shots you can use partial full load array
+{%- endcomment -%}
+
+CREATE TABLE IF NOT EXISTS src_csv_{{ tgt_table_name }}_merge (
+
+     {% for all_field in all_fields %}"{{ all_field['name']}}" {{ all_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    ,{% for sys_src_field in sys_src_fields %}{{ sys_src_field['name']}} {{ sys_src_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    ,{% for ind_src_field in ind_src_fields %}{{ ind_src_field['name']}} {{ ind_src_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+
+)
+{% comment %} 
+DISTKEY (
+        {% for key in keys %}"{{ key['name']}}"{% unless forloop.last %} 
+       ,{% endunless %}{% endfor %} -- only 1 field in distkey allowed
+)
+{% endcomment %}
+SORTKEY AUTO
+;
+
+TRUNCATE TABLE src_csv_{{ tgt_table_name }}_merge
+;
+
+{% comment %} 
+CREATE INDEX IF NOT EXISTS ix_src_csv_{{ tgt_table_name }}_merge
+ON src_csv_{{ tgt_table_name }}_merge ({% for key in keys %}"{{ key['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %})
+; {% endcomment %}
+
+CREATE TABLE IF NOT EXISTS src_csv_{{ tgt_table_name }}_merge_uniq (
+
+     {% for all_field in all_fields %}"{{ all_field['name']}}" {{ all_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    ,{% for sys_src_field in sys_src_fields %}{{ sys_src_field['name']}} {{ sys_src_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    ,{% for ind_src_field in ind_src_fields %}{{ ind_src_field['name']}} {{ ind_src_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+
+)
+{% comment %} 
+DISTKEY (
+        {% for key in keys %}"{{ key['name']}}"{% unless forloop.last %} 
+       ,{% endunless %}{% endfor %} -- only 1 field in distkey allowed
+)
+{% endcomment %}
+SORTKEY AUTO
+;
+
+{% comment %} 
+CREATE INDEX IF NOT EXISTS ix_src_csv_{{ tgt_table_name }}_merge_uniq
+ON src_csv_{{ tgt_table_name }}_merge_uniq ({% for key in keys %}"{{ key['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %})
+; {% endcomment %}
+
+CREATE TABLE IF NOT EXISTS src_csv_{{ tgt_table_name }}_merge_diff (
+
+     {% for all_field in all_fields %}"{{ all_field['name']}}" {{ all_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    ,{% for sys_src_field in sys_src_fields %}{{ sys_src_field['name']}} {{ sys_src_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+    ,{% for ind_src_field in ind_src_fields %}{{ ind_src_field['name']}} {{ ind_src_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+
+)
+{% comment %} 
+DISTKEY (
+        {% for key in keys %}"{{ key['name']}}"{% unless forloop.last %} 
+       ,{% endunless %}{% endfor %} -- only 1 field in distkey allowed
+)
+{% endcomment %}
+SORTKEY AUTO
+;
+
+{% comment %}
+ CREATE INDEX IF NOT EXISTS ix_src_csv_{{ tgt_table_name }}_merge_diff
+ON src_csv_{{ tgt_table_name }}_merge_diff ({% for key in keys %}"{{ key['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %})
+; {% endcomment %}
+
+CREATE TABLE IF NOT EXISTS stg_csv_{{ tgt_table_name }}_merge (
+
+     {% for all_field in all_fields %}"{{ all_field['name']}}" {{ all_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+
+     {%- if historization_type == 'scd_2' -%}
+    ,{% for sys_stg_scd_2_field in sys_stg_scd_2_fields %}{{ sys_stg_scd_2_field['name']}} {{ sys_stg_scd_2_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+     {%- else -%}
+    ,{% for sys_stg_scd_1_field in sys_stg_scd_1_fields %}{{ sys_stg_scd_1_field['name']}} {{ sys_stg_scd_1_field['type']}}{% unless forloop.last %} 
+    ,{% endunless %}{% endfor %}
+     {% endif -%}
+    {%- comment -%}
+    ,CONSTRAINT pk_stg_csv_{{ tgt_table_name }}_merge PRIMARY KEY ({% for key in keys %}"{{ key['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %})
+    {%- endcomment -%}
+)
+DISTKEY(_sys_id)
+SORTKEY (_sys_id)
+;
+
+{% comment %} 
+CREATE INDEX IF NOT EXISTS ix_stg_csv_{{ tgt_table_name }}_merge
+ON stg_csv_{{ tgt_table_name }}_merge ({% for key in keys %}"{{ key['name']}}"{% unless forloop.last %},{% endunless %}{% endfor %})
+; {% endcomment %}

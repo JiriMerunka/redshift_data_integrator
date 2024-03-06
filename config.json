@@ -1,0 +1,29 @@
+{
+    "iam_role": "iam_role",
+    "db_database": "db_database",
+    "db_user": "db_user",
+    "db_password": "db_password",
+    "db_port": "5439",
+    "db_host": "db_host",
+    "sslmode": "verify-full",
+    "sslrootcert": "ssl/amazon-trust-ca-bundle.crt",
+
+    "unload_to_s3_s3_dir": "s3://some_s3/redshift_to_snowflake",
+    "unload_to_dev_s3_s3_dir": "s3://some_s3/redshift_to_snowflake",
+   
+
+    "ruby_parser": "ruby_expand_template/RunLiquid.rb",
+
+    "params_dir": "param_definitions/",
+    "stg_ddl_dir": "sql/stg_ddl/",
+    "stg_dl_dir": "sql/stg_dl/",
+    "src_copy_dir": "sql/src_copy/",
+    "src_copy_comm_dir": "sql/src_copy/copy_commands/",
+
+    "lq_create_table": "templates/create_table.liquid",
+    "lq_scd2_stg": "templates/scd2_stg.liquid",
+    "lq_copy_data": "templates/copy_data.liquid"
+
+
+
+}

@@ -1,0 +1,3 @@
+ruby ./RunLiquid.rb ./templates/md5.liquid ./param_definitions/gdp_f_ads_conn_size.json
+--long version
+ruby /home/jirimerunka/Desktop/Git_Repo/ZZ_Useful_scripts/SQL/SCD2_liquid/Liquid_Templates/Consolidate/ruby_expand_template/RunLiquid.rb ./templates/consolidate.liquid ./param_definitions/out_tablename.json
